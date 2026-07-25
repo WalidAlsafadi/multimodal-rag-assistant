@@ -1,0 +1,32 @@
+# RAG Project Dependencies
+# Backend
+fastapi
+uvicorn
+python-multipart
+pydantic
+python-dotenv
+
+# Document Processing
+PyPDF2
+python-docx
+pdf2image
+Pillow
+
+# LLM & Embeddings (Updated to Groq and Local Embeddings)
+groq
+llama-index
+llama-index-llms-groq
+llama-index-embeddings-huggingface
+llama-index-readers-file
+llama-parse
+
+# Vector Store & RAG
+chromadb
+sentence-transformers
+
+# Frontend
+streamlit
+requests
+
+# Utilities
+numpy
