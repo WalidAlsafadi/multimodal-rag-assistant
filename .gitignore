@@ -6,10 +6,13 @@ __pycache__/
 # Virtual environments
 venv/
 env/
+.venv/
 
 # Environment files
 .env
 .env.local
+frontend/.env
+frontend/.env.local
 
 # Editor settings
 .vscode/
@@ -25,19 +28,13 @@ vectorstore/
 # Chroma DB file (if persisted)
 chroma.sqlite3
 
-# Streamlit cache
-.streamlit/
-
 # Local Poppler installation
 backend/poppler-*/
 
 # Additional virtual environments and caches
-.venv/
 .pytest_cache/
 *.log
 
-# Future Next.js frontend
+# Frontend
 node_modules/
-.next/
-out/
 dist/

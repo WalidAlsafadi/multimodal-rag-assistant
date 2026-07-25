@@ -1,254 +1,279 @@
-"""
-FastAPI Backend for RAG Project.
-Provides endpoints for file upload, document processing, and question answering.
-"""
-import os
-import shutil
-from typing import List, Optional
+"""FastAPI API for InsightLens."""
+from __future__ import annotations
+
+import asyncio
+import re
+import uuid
 from pathlib import Path
+from typing import Any
+from zipfile import BadZipFile, ZipFile
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, Field
 
-import sys
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from .config import (
+    APPLICATION_NAME,
+    FRONTEND_ORIGINS,
+    MAX_ACTIVE_DOCUMENTS,
+    MAX_FILENAME_CHARS,
+    MAX_UPLOAD_BYTES,
+    MAX_UPLOAD_MB,
+    OPENAI_MODEL,
+    QUESTION_MAX_CHARS,
+    SECURITY_HEADERS,
+    SUPPORTED_EXTENSIONS,
+    UPLOAD_DIR,
+)
+from .utils.document_processor import DocumentProcessingError, DocumentProcessor
+from .utils.rag_engine import AnswerGenerationError, RAGEngine
 
-from config import UPLOAD_DIR, SUPPORTED_EXTENSIONS, GROQ_API_KEY, LLAMA_CLOUD_API_KEY
-from utils.document_processor import DocumentProcessor
-from utils.rag_engine import RAGEngine
-
-
-
-POPPLER_PATH = os.path.join(os.path.dirname(__file__), "poppler-26.02.0", "Library", "bin")
-os.environ["PATH"] += os.pathsep + POPPLER_PATH
-
-# Initialize FastAPI app
 app = FastAPI(
-    title="RAG API",
-    description="Retrieval-Augmented Generation API for document Q&A with image analysis",
+    title=f"{APPLICATION_NAME} API",
+    description="Multimodal RAG API for document exploration.",
     version="1.0.0",
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=FRONTEND_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type"],
 )
 
-# Initialize components
 doc_processor = DocumentProcessor()
 rag_engine = RAGEngine()
+rag_engine.clear_index()
+documents: dict[str, dict[str, Any]] = {}
+session_lock = asyncio.Lock()
+SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._ -]+")
 
-# Track processed documents
-processed_documents = []
+
+class HealthResponse(BaseModel):
+    status: str
+    application: str
+    model: str
+    documents: int
 
 
-# Pydantic models
 class QuestionRequest(BaseModel):
-    question: str
-    analyze_images: bool = True
+    question: str = Field(..., min_length=1, max_length=QUESTION_MAX_CHARS)
+
+
+class Source(BaseModel):
+    document_id: str
+    filename: str
+    page: int | None = None
+    content_type: str
+    snippet: str
+    score: float | None = None
 
 
 class AnswerResponse(BaseModel):
     answer: str
-    sources: List[dict]
-    image_analysis: Optional[List[dict]] = None
+    sources: list[Source]
 
 
-class StatusResponse(BaseModel):
-    status: str
-    documents_count: int
-    api_keys_configured: dict
+class DocumentSummary(BaseModel):
+    id: str
+    filename: str
+    file_type: str
+    pages: int | None = None
+    text_items: int
+    visual_items: int
+    warnings: list[str] = Field(default_factory=list)
 
 
-@app.get("/", response_model=StatusResponse)
-async def root():
-    """Get API status and configuration."""
-    return StatusResponse(
-        status="RAG API is running",
-        documents_count=len(processed_documents),
-        api_keys_configured={
-            "groq": bool(GROQ_API_KEY),
-            "llama_cloud": bool(LLAMA_CLOUD_API_KEY),
-        },
+class UploadResponse(BaseModel):
+    document: DocumentSummary
+    warnings: list[str]
+
+
+class DocumentsResponse(BaseModel):
+    documents: list[DocumentSummary]
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response: Response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
+@app.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
+    return HealthResponse(
+        status="ok",
+        application=APPLICATION_NAME,
+        model=OPENAI_MODEL,
+        documents=len(documents),
     )
 
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """
-    Upload a document file (PDF, Word, or Image).
-    Processes the file and indexes it for RAG.
-    """
-    # Validate file extension
-    ext = Path(file.filename).suffix.lower()
+@app.post("/upload", response_model=UploadResponse)
+async def upload_file(request: Request, file: UploadFile = File(...)) -> UploadResponse:
+    _reject_oversized_content_length(request)
+    safe_filename = _safe_display_filename(file.filename)
+    if not safe_filename:
+        raise HTTPException(status_code=400, detail="Filename cannot be empty.")
+
+    ext = Path(safe_filename).suffix.lower()
     if ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file format. Supported: {list(SUPPORTED_EXTENSIONS.keys())}"
+            detail=f"Unsupported file format. Supported: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
         )
 
-    # Save uploaded file
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    document_id = str(uuid.uuid4())
+    saved_path = UPLOAD_DIR / f"{document_id}{ext}"
+
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error saving file: {str(e)}")
+        async with session_lock:
+            if len(documents) >= MAX_ACTIVE_DOCUMENTS:
+                raise HTTPException(
+                    status_code=429,
+                    detail=f"Document limit reached. Clear or delete documents before uploading more.",
+                )
+
+        size = 0
+        with saved_path.open("wb") as handle:
+            while chunk := await file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail=f"File exceeds the {MAX_UPLOAD_MB} MB upload limit.")
+                handle.write(chunk)
+
+        _validate_saved_file(saved_path, ext)
+        result = doc_processor.process_file(saved_path, document_id, safe_filename)
+        summary = result["document"]
+        summary["warnings"] = result["warnings"]
+        async with session_lock:
+            documents[document_id] = {
+                "summary": summary,
+                "items": result["items"],
+                "file_path": saved_path,
+            }
+            _rebuild_index()
+        return UploadResponse(document=DocumentSummary(**summary), warnings=result["warnings"])
+    except HTTPException:
+        _cleanup_file(saved_path)
+        raise
+    except DocumentProcessingError as exc:
+        _cleanup_file(saved_path)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        _cleanup_file(saved_path)
+        raise HTTPException(status_code=500, detail="The file could not be processed.") from exc
     finally:
-        file.file.close()
+        await file.close()
 
-    # Process the document
-    try:
-        result = doc_processor.process_file(file_path)
 
-        # Analyze images if present
-        if result["images"] and GROQ_API_KEY:
-            result["images"] = doc_processor.analyze_images(result["images"])
-
-            # Append image descriptions to text
-            image_descriptions = []
-            for img in result["images"]:
-                if img.get("description"):
-                    image_descriptions.append(
-                        f"[Image from {Path(file.filename).name}]: {img['description']}"
-                    )
-            if image_descriptions:
-                result["text"] += "\n\n=== IMAGE ANALYSIS ===\n" + "\n\n".join(image_descriptions)
-
-        # Add to processed documents
-        doc_entry = {
-            "filename": file.filename,
-            "text": result["text"],
-            "images": result["images"],
-            "metadata": result["metadata"],
-        }
-        processed_documents.append(doc_entry)
-
-        # Re-index all documents
-        index_success = rag_engine.index_documents(processed_documents)
-
-        return {
-            "message": f"File '{file.filename}' uploaded and processed successfully",
-            "document_info": {
-                "filename": file.filename,
-                "text_length": len(result["text"]),
-                "images_found": len(result["images"]),
-                "metadata": result["metadata"],
-            },
-            "indexed": index_success,
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+@app.get("/documents", response_model=DocumentsResponse)
+async def list_documents() -> DocumentsResponse:
+    async with session_lock:
+        summaries = [DocumentSummary(**entry["summary"]) for entry in documents.values()]
+    return DocumentsResponse(documents=summaries)
 
 
 @app.post("/ask", response_model=AnswerResponse)
-async def ask_question(request: QuestionRequest):
-    """
-    Ask a question about the uploaded documents.
-    Uses RAG to retrieve relevant context and generate an answer.
-    """
-    if not processed_documents:
-        raise HTTPException(
-            status_code=400,
-            detail="No documents uploaded yet. Please upload a document first."
-        )
+async def ask_question(request: QuestionRequest) -> AnswerResponse:
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Question cannot be empty.")
+    async with session_lock:
+        has_documents = bool(documents)
+    if not has_documents:
+        raise HTTPException(status_code=400, detail="Upload and index at least one document before asking questions.")
 
-    # Get RAG answer
-    rag_result = rag_engine.query(request.question)
-
-    # Collect image analysis if requested
-    image_analysis = None
-    if request.analyze_images:
-        image_analysis = []
-        for doc in processed_documents:
-            for img in doc.get("images", []):
-                if img.get("description"):
-                    image_analysis.append({
-                        "document": doc["filename"],
-                        "description": img["description"],
-                    })
-
-    return AnswerResponse(
-        answer=rag_result["answer"],
-        sources=rag_result["sources"],
-        image_analysis=image_analysis,
-    )
+    try:
+        result = rag_engine.query(question)
+    except AnswerGenerationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="The question could not be answered.") from exc
+    return AnswerResponse(answer=result["answer"], sources=[Source(**source) for source in result["sources"]])
 
 
-@app.get("/documents")
-async def list_documents():
-    """List all uploaded and processed documents."""
-    return {
-        "documents": [
-            {
-                "filename": doc["filename"],
-                "text_length": len(doc["text"]),
-                "images_count": len(doc.get("images", [])),
-                "metadata": doc["metadata"],
-            }
-            for doc in processed_documents
-        ]
-    }
+@app.delete("/documents/{document_id}")
+async def delete_document(document_id: str) -> dict[str, str]:
+    async with session_lock:
+        entry = documents.pop(document_id, None)
+        if entry is not None:
+            _cleanup_file(entry["file_path"])
+            _rebuild_index()
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return {"message": "Document deleted successfully."}
 
 
 @app.delete("/documents")
-async def clear_documents():
-    """Clear all uploaded documents and the vector index."""
-    global processed_documents
-    processed_documents = []
-
-    # Clear vector store
-    rag_engine.clear_index()
-
-    # Clear upload directory (keep directory, remove files)
-    for item in os.listdir(UPLOAD_DIR):
-        item_path = os.path.join(UPLOAD_DIR, item)
-        try:
-            if os.path.isfile(item_path):
-                os.remove(item_path)
-            elif os.path.isdir(item_path):
-                shutil.rmtree(item_path)
-        except Exception as e:
-            print(f"Error removing {item_path}: {e}")
-
-    return {"message": "All documents cleared successfully"}
-
-
-@app.delete("/documents/{filename}")
-async def delete_document(filename: str):
-    """Delete a specific document."""
-    global processed_documents
-
-    # Remove from processed documents
-    processed_documents = [d for d in processed_documents if d["filename"] != filename]
-
-    # Remove file from upload directory
-    file_path = os.path.join(UPLOAD_DIR, filename)
-    if os.path.exists(file_path):
-        os.remove(file_path)
-
-    # Re-index remaining documents
-    if processed_documents:
-        rag_engine.index_documents(processed_documents)
-    else:
+async def clear_documents() -> dict[str, str]:
+    async with session_lock:
+        for entry in list(documents.values()):
+            _cleanup_file(entry["file_path"])
+        documents.clear()
         rag_engine.clear_index()
+    return {"message": "All documents cleared successfully."}
 
-    return {"message": f"Document '{filename}' deleted successfully"}
+
+def _rebuild_index() -> None:
+    items = [item for entry in documents.values() for item in entry["items"]]
+    rag_engine.rebuild_index(items)
 
 
-if __name__ == "__main__":
-    import uvicorn
-    from config import BACKEND_HOST, BACKEND_PORT
+def _cleanup_file(path: Path) -> None:
+    try:
+        resolved = path.resolve()
+        if not resolved.is_relative_to(UPLOAD_DIR.resolve()):
+            return
+        if resolved.exists() and resolved.is_file():
+            resolved.unlink()
+    except (OSError, ValueError):
+        pass
 
-    print(f"Starting RAG Backend Server on {BACKEND_HOST}:{BACKEND_PORT}")
-    print(f"Upload directory: {UPLOAD_DIR}")
-    print(f"Groq API Key configured: {bool(GROQ_API_KEY)}")
-    print(f"Llama Cloud API Key configured: {bool(LLAMA_CLOUD_API_KEY)}")
 
-    uvicorn.run(app, host=BACKEND_HOST, port=BACKEND_PORT)
+def _safe_display_filename(filename: str | None) -> str:
+    raw_name = Path(filename or "").name.strip()
+    if not raw_name:
+        return ""
+    cleaned = SAFE_FILENAME_RE.sub("_", raw_name)
+    cleaned = cleaned.strip(" ._")
+    if len(cleaned) > MAX_FILENAME_CHARS:
+        stem = Path(cleaned).stem[: MAX_FILENAME_CHARS - len(Path(cleaned).suffix) - 1]
+        cleaned = f"{stem}{Path(cleaned).suffix}"
+    return cleaned
+
+
+def _reject_oversized_content_length(request: Request) -> None:
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File exceeds the {MAX_UPLOAD_MB} MB upload limit.")
+
+
+def _validate_saved_file(path: Path, ext: str) -> None:
+    if ext == ".pdf":
+        with path.open("rb") as handle:
+            if handle.read(5) != b"%PDF-":
+                raise HTTPException(status_code=400, detail="Uploaded file content does not match its extension.")
+        return
+
+    if ext == ".docx":
+        try:
+            with ZipFile(path) as archive:
+                names = set(archive.namelist())
+                if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+                    raise HTTPException(status_code=400, detail="Uploaded file content does not match its extension.")
+        except BadZipFile as exc:
+            raise HTTPException(status_code=400, detail="Uploaded file content does not match its extension.") from exc
+        return
+
+    if ext in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}:
+        try:
+            with Image.open(path) as image:
+                image.verify()
+        except (UnidentifiedImageError, OSError) as exc:
+            raise HTTPException(status_code=400, detail="Uploaded file content does not match its extension.") from exc
+        return
