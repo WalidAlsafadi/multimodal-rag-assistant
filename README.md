@@ -190,7 +190,7 @@ Edit `frontend/src/data/team.ts` before submission with final names and roles.
 ## Known Limitations
 
 - Documents are session-scoped and are cleared when the backend restarts.
-- There is no OCR pipeline for scanned documents beyond visual descriptions.
+- OCR-style extraction is handled through OpenAI vision analysis for images and rendered PDF pages, not a separate offline OCR engine.
 - Visual PDF analysis is capped by `MAX_VISUAL_PDF_PAGES`.
 - The first local embedding-model download may take additional time.
 
