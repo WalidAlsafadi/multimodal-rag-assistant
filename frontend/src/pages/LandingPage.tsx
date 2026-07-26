@@ -9,7 +9,9 @@ export default function LandingPage() {
     <div className="min-h-screen bg-slate-50 text-ink">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95">
         <nav className="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
-          <Link to="/" className="text-xl font-semibold">InsightLens</Link>
+          <Link to="/" className="brand-link" aria-label="InsightLens home">
+            InsightLens
+          </Link>
           <div className="hidden items-center gap-6 text-sm text-slate-600 md:flex">
             <a href="#how-it-works">How It Works</a>
             <a href="#technology">Technology</a>

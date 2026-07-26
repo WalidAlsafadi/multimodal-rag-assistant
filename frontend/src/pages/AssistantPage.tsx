@@ -9,10 +9,10 @@ import type { ChatMessage, DocumentSummary } from '../types/api';
 
 const supported = ['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff'];
 const uploadMessages = [
-  'Uploading and processing...',
-  'Extracting document content...',
-  'Analyzing visual information...',
-  'Building the search index...',
+  'Uploading file to the backend...',
+  'Waiting for document processing...',
+  'Backend may extract text, analyze visuals, and rebuild the index...',
+  'Still processing; large PDFs can take longer...',
 ];
 const suggestions = [
   'Summarize the uploaded content.',
@@ -135,7 +135,9 @@ export default function AssistantPage() {
     <div className="min-h-screen bg-slate-50 text-ink">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
-          <Link to="/" className="text-xl font-semibold">InsightLens</Link>
+          <Link to="/" className="brand-link" aria-label="InsightLens home">
+            InsightLens
+          </Link>
           <span className="text-sm text-slate-500">Multimodal RAG for Intelligent Document Exploration</span>
         </div>
       </header>
@@ -267,7 +269,7 @@ export default function AssistantPage() {
             ))}
             {asking && (
               <div className="rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
-                <Loader2 className="mr-2 inline animate-spin" size={16} /> Searching uploaded content... Generating a grounded answer...
+                <Loader2 className="mr-2 inline animate-spin" size={16} /> Retrieving evidence and requesting a grounded answer...
               </div>
             )}
           </div>

@@ -1,5 +1,5 @@
 export const teamMembers = [
-  { name: 'Team Member 1', role: 'Project contributor' },
-  { name: 'Team Member 2', role: 'Project contributor' },
-  { name: 'Team Member 3', role: 'Project contributor' },
+  { name: 'Hamza Obaid', role: 'Project contributor' },
+  { name: 'Walid Alsafadi', role: 'Project contributor' },
+  { name: 'Ameer Alzerei', role: 'Project contributor' },
 ];
