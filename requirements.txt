@@ -1,32 +1,20 @@
-# RAG Project Dependencies
-# Backend
 fastapi
 uvicorn
 python-multipart
 pydantic
 python-dotenv
 
-# Document Processing
+openai
 PyPDF2
+pdfplumber==0.11.4
 python-docx
 pdf2image
-Pillow
+Pillow<12
 
-# LLM & Embeddings (Updated to Groq and Local Embeddings)
-groq
-llama-index
-llama-index-llms-groq
-llama-index-embeddings-huggingface
-llama-index-readers-file
-llama-parse
-
-# Vector Store & RAG
 chromadb
+llama-index-core
 sentence-transformers
-
-# Frontend
-streamlit
-requests
-
-# Utilities
 numpy
+
+pytest
+httpx
