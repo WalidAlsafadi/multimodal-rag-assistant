@@ -120,10 +120,11 @@ Terminal 1, from the repository root:
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The project also includes `run_backend.py` as a convenience wrapper for the same FastAPI app:
+The project also includes Windows command launchers in the repository root:
 
 ```bash
-python run_backend.py
+run_backend.cmd
+run_frontend.cmd
 ```
 
 Terminal 2, from the repository root:
