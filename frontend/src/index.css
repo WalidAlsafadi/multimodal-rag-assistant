@@ -1,0 +1,108 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color: #172033;
+  background: #f8fafc;
+  font-family: Cairo, ui-sans-serif, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+a,
+button {
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center rounded-md border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:border-accent hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2;
+  }
+
+  .icon-button {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-md border border-transparent text-slate-600 hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2;
+  }
+
+  .brand-link {
+    @apply inline-flex items-center gap-2 text-xl font-bold text-ink focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2;
+  }
+
+  .brand-glyph {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-md border border-indigo-100 bg-indigo-50 text-accent shadow-sm;
+  }
+
+  .section-title {
+    @apply text-3xl font-semibold text-ink;
+  }
+
+  .panel-title {
+    @apply text-lg font-semibold text-ink;
+  }
+
+  .feature-card {
+    @apply rounded-lg border border-slate-200 bg-slate-50 p-5 shadow-sm transition hover:border-indigo-200 hover:bg-white;
+  }
+
+  .feature-card h3 {
+    @apply mt-4 text-lg font-semibold;
+  }
+
+  .feature-card p {
+    @apply mt-2 text-sm leading-6 text-slate-600;
+  }
+
+  .suggestion {
+    @apply rounded-md border border-slate-200 bg-white p-3 text-left text-sm font-medium text-slate-700 shadow-sm hover:border-accent hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent;
+  }
+
+  .chat-message {
+    @apply max-w-3xl rounded-lg px-5 py-4 leading-7;
+  }
+
+  .chat-user {
+    @apply ml-auto bg-accent text-white;
+  }
+
+  .chat-assistant {
+    @apply mr-auto border border-slate-200 bg-slate-50 text-slate-800;
+  }
+
+  .chat-assistant ul {
+    @apply list-disc pl-5;
+  }
+
+  .chat-assistant ol {
+    @apply list-decimal pl-5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

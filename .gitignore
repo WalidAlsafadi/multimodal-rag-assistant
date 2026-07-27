@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Environment files
+.env
+.env.local
+frontend/.env
+frontend/.env.local
+
+# Editor settings
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+
+# Data folders
+uploads/
+vectorstore/
+
+# Chroma DB file (if persisted)
+chroma.sqlite3
+
+# Local Poppler installation
+backend/poppler-*/
+
+# Additional virtual environments and caches
+.pytest_cache/
+*.log
+
+# Frontend
+node_modules/
+dist/
